@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, BookOpen, Search, Shuffle, ChevronRight } from 'lucide-react'; // Importing icons, added ChevronRight
+import { ChevronLeft, BookOpen, Search, Shuffle, ChevronRight } from 'lucide-react'; // Importing icons
 
 // Main App component
 const App = () => {
