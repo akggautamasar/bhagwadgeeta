@@ -1,24 +1,35 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, BookOpen, Search, Shuffle, ChevronRight, Volume2 } from 'lucide-react';
+import { ChevronLeft, BookOpen, Search, Shuffle, ChevronRight, Volume2 } from 'lucide-react'; // Importing icons, added Volume2 for TTS
 
+// Main App component
 const App = () => {
-    const [chapters, setChapters] = useState([]);
-    const [selectedChapter, setSelectedChapter] = useState(null);
-    const [selectedSlok, setSelectedSlok] = useState(null);
-    const [viewMode, setViewMode] = useState('chapters');
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [slokChapterInput, setSlokChapterInput] = useState('');
-    const [slokVerseInput, setSlokVerseInput] = useState('');
-    const [isSpeaking, setIsSpeaking] = useState(false);
-    const [ttsMessage, setTtsMessage] = useState('');
-    const [isFetching, setIsFetching] = useState(false);
-    const audioRef = useRef(null);
+    // State variables for managing data and UI
+    const [chapters, setChapters] = useState([]); // Stores the list of chapters
+    const [selectedChapter, setSelectedChapter] = useState(null); // Stores the currently selected chapter for detailed view
+    const [selectedSlok, setSelectedSlok] = useState(null); // Stores the currently selected slok details
+    const [viewMode, setViewMode] = useState('chapters'); // Controls the current view: 'chapters', 'slokDetail', 'chapterDetail'
+    const [loading, setLoading] = useState(true); // Manages loading state for API calls
+    const [error, setError] = useState(null); // Stores any error messages
+    const [slokChapterInput, setSlokChapterInput] = useState(''); // Input for specific slok chapter
+    const [slokVerseInput, setSlokVerseInput] = useState(''); // Input for specific slok verse
 
+    // Text-to-Speech specific states and ref
+    const [isSpeaking, setIsSpeaking] = useState(false); // State for TTS loading
+    const [ttsMessage, setTtsMessage] = useState(''); // Message for TTS status
+    const [isFetching, setIsFetching] = useState(false); // State to prevent multiple concurrent API fetches
+    const audioRef = useRef(null); // Ref for the audio player element
+
+    // Base URL for the Bhagavad Gita API
     const bgBaseUrl = "https://vedicscriptures.github.io";
-    const TTS_API_URL = "https://text-to-speech.api-droid.workers.dev/";
+    
+    // IMPORTANT: Updated TTS API URL to use the CORS proxy
+    const TTS_API_BASE_URL = "https://text-to-speech.api-droid.workers.dev/";
+    const CORS_PROXY_URL = "https://cors.hideme.eu.org/?url=";
+    const TTS_API_URL = `${CORS_PROXY_URL}${encodeURIComponent(TTS_API_BASE_URL)}`; // Encode the actual API URL
+
     const slokCounts = [47, 72, 43, 42, 29, 47, 30, 28, 34, 42, 55, 20, 35, 27, 20, 24, 28, 78];
 
+    // Function to fetch all chapters
     const fetchChapters = async () => {
         setLoading(true);
         setError(null);
@@ -45,8 +56,9 @@ const App = () => {
         }
     };
 
+    // Function to fetch a specific slok by chapter and verse
     const fetchSpecificSlok = async (chapter, verse) => {
-        if (isFetching) return;
+        if (isFetching) return; // Prevent multiple fetches
         setIsFetching(true);
         setLoading(true);
         setError(null);
@@ -73,8 +85,9 @@ const App = () => {
         }
     };
 
+    // Function to fetch a random slok
     const fetchRandomSlok = async () => {
-        if (isFetching) return;
+        if (isFetching) return; // Prevent multiple fetches
         setIsFetching(true);
         setLoading(true);
         setError(null);
@@ -120,52 +133,74 @@ const App = () => {
         fetchSpecificSlok(nextChapter, nextVerse);
     };
 
+    // Function to handle Text-to-Speech conversion
     const handleTextToSpeech = async () => {
         if (!selectedSlok) {
             setTtsMessage("No slok selected to speak.");
             return;
         }
+        
         let textToSpeak = '';
+        // Prioritize English translation, then fall back to Sanskrit verse
         if (selectedSlok.gambir?.et) {
             textToSpeak = selectedSlok.gambir.et;
             setTtsMessage("Speaking English translation...");
         } else if (selectedSlok.slok) {
             textToSpeak = selectedSlok.slok;
-            setTtsMessage("Speaking Sanskrit verse...");
+            setTtsMessage("Speaking Sanskrit verse (may not sound ideal with Arabic voice)...");
         }
+        
         if (!textToSpeak.trim()) {
             setTtsMessage("No valid text found to speak.");
             return;
         }
+
         setIsSpeaking(true);
         setTtsMessage("Generating speech...");
+
         try {
-            if (audioRef.current) audioRef.current.src = '';
+            if (audioRef.current) audioRef.current.src = ''; // Clear previous audio
+            
+            // Use the proxied TTS_API_URL
             const response = await fetch(TTS_API_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: textToSpeak, sound: 'sound7' })
+                headers: {
+                    'Content-Type': 'application/json',
+                    // The proxy handles the origin headers, so no need to specify extra ones
+                },
+                body: JSON.stringify({
+                    text: textToSpeak,
+                    sound: 'sound7' // Keep this based on your Python script
+                })
             });
+
             if (!response.ok) {
-                throw new Error(`TTS API request failed: ${response.statusText}`);
+                const errorResponse = await response.text();
+                throw new Error(`TTS API request failed: ${response.status} ${response.statusText} - ${errorResponse}`);
             }
+
             const responseJson = await response.json();
+
             if (responseJson && "audioContent" in responseJson && typeof responseJson.audioContent === 'string') {
                 const base64Audio = responseJson.audioContent;
+                // Basic check for valid base64 structure (optional but good for robustness)
                 if (!base64Audio.match(/^[A-Za-z0-9+/=]+$/)) {
-                    throw new Error('Invalid base64 audio content.');
+                    throw new Error('Invalid base64 audio content format received.');
                 }
-                const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
+                const audioUrl = `data:audio/mp3;base64,${base64Audio}`; 
+                
                 if (audioRef.current) {
                     audioRef.current.src = audioUrl;
                     audioRef.current.play().catch(err => {
-                        setTtsMessage(`Audio playback failed: ${err.message}`);
+                        // Catch potential DOMException for autoplay issues
+                        setTtsMessage(`Audio playback failed: ${err.message}. Please try interacting with the page first.`);
                     });
                 }
                 setTtsMessage("Speech generated successfully! Playing audio.");
             } else {
-                setTtsMessage("Audio data not found in the TTS response.");
+                setTtsMessage("Audio data not found in the TTS response or invalid format.");
             }
+
         } catch (err) {
             console.error('Error in Text-to-Speech:', err);
             setTtsMessage(`Error generating speech: ${err.message}.`);
