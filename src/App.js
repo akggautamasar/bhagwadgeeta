@@ -1,3 +1,4 @@
+```javascript
 import React, { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, BookOpen, Search, Shuffle, ChevronRight, Volume2 } from 'lucide-react';
 
@@ -11,19 +12,14 @@ const App = () => {
     const [error, setError] = useState(null);
     const [slokChapterInput, setSlokChapterInput] = useState('');
     const [slokVerseInput, setSlokVerseInput] = useState('');
-    
-    // Removed isSpeaking state as it's not directly controlling API loading anymore,
-    // but the TTS message will still show feedback.
-    // const [isSpeaking, setIsSpeaking] = useState(false); 
     const [ttsMessage, setTtsMessage] = useState('');
-    const [isFetching, setIsFetching] = useState(false); // For Gita data fetching
-    
-    // audioRef is no longer directly used for playing downloaded audio,
-    // as speechSynthesis handles playback. Keeping it for consistency in removing references.
-    // const audioRef = useRef(null); 
+    const [isFetching, setIsFetching] = useState(false);
+    const audioRef = useRef(null);
 
     const bgBaseUrl = "https://vedicscriptures.github.io";
     const slokCounts = [47, 72, 43, 42, 29, 47, 30, 28, 34, 42, 55, 20, 35, 27, 20, 24, 28, 78];
+    const murfApiKey = 'ap2_676d27b1-565a-4e5e-b102-2c9dfc46d376';
+    const murfApiUrl = 'https://api.murf.ai/v1/speech/generate';
 
     // Function to fetch all chapters
     const fetchChapters = async () => {
@@ -52,7 +48,7 @@ const App = () => {
         }
     };
 
-    // Function to fetch a specific slok by chapter and verse
+    // Function to fetch a specific slok
     const fetchSpecificSlok = async (chapter, verse) => {
         if (isFetching) return;
         setIsFetching(true);
@@ -60,7 +56,7 @@ const App = () => {
         setError(null);
         setSelectedSlok(null);
         setTtsMessage('');
-        // No audioRef.current.src = '' needed here as we are not managing an audio element for TTS
+        if (audioRef.current) audioRef.current.src = '';
         try {
             const response = await fetch(`${bgBaseUrl}/slok/${chapter}/${verse}`, { redirect: 'follow' });
             if (!response.ok) {
@@ -89,7 +85,7 @@ const App = () => {
         setError(null);
         setSelectedSlok(null);
         setTtsMessage('');
-        // No audioRef.current.src = '' needed here
+        if (audioRef.current) audioRef.current.src = '';
         try {
             const chapter = Math.floor(Math.random() * slokCounts.length) + 1;
             const verse = Math.floor(Math.random() * slokCounts[chapter - 1]) + 1;
@@ -129,80 +125,76 @@ const App = () => {
         fetchSpecificSlok(nextChapter, nextVerse);
     };
 
-    // Function to handle Text-to-Speech conversion using Web Speech API
-    const handleTextToSpeech = () => {
+    // Function to handle Text-to-Speech with Murf AI
+    const handleTextToSpeech = async (translationType) => {
         if (!selectedSlok) {
             setTtsMessage("No slok selected to speak.");
             return;
         }
-        
-        let textToSpeak = '';
-        let langCode = 'en-US'; // Default language for English translation
 
-        if (selectedSlok.gambir?.et) {
+        let textToSpeak = '';
+        let voiceConfig = {};
+        let languageLabel = '';
+
+        if (translationType === 'hindi' && selectedSlok.tej?.ht) {
+            textToSpeak = selectedSlok.tej.ht;
+            voiceConfig = { voiceId: 'en-US-naomi', style: 'Conversational', multiNativeLocale: 'hi_IN' };
+            languageLabel = 'Hindi';
+        } else if (translationType === 'english' && selectedSlok.gambir?.et) {
             textToSpeak = selectedSlok.gambir.et;
-            setTtsMessage("Speaking English translation...");
-            langCode = 'en-US';
-        } else if (selectedSlok.slok) {
-            textToSpeak = selectedSlok.slok;
-            setTtsMessage("Speaking Sanskrit verse (pronunciation depends on browser voice)...");
-            // Sanskrit is tricky for TTS. 'hi-IN' (Hindi) or 'en-US' might be best bets,
-            // or leave it to browser default if no specific match.
-            // For general Sanskrit, often no perfect voice exists.
-            langCode = 'hi-IN'; // Attempt Hindi voice for Sanskrit, or use 'en-US' as fallback
-        }
-        
-        if (!textToSpeak.trim()) {
-            setTtsMessage("No valid text found to speak.");
+            voiceConfig = { voiceId: 'bn-IN-ishani', style: 'Conversational', multiNativeLocale: 'en_IN' };
+            languageLabel = 'English';
+        } else if (translationType === 'sivananda' && selectedSlok.siva?.et) {
+            textToSpeak = selectedSlok.siva.et;
+            voiceConfig = { voiceId: 'bn-IN-ishani', style: 'Conversational', multiNativeLocale: 'en_IN' };
+            languageLabel = 'Sivananda English';
+        } else {
+            setTtsMessage(`No ${translationType} translation available for this slok.`);
             return;
         }
 
-        // Check if SpeechSynthesis is supported
-        if ('speechSynthesis' in window) {
-            const utterance = new SpeechSynthesisUtterance(textToSpeak);
-            
-            // Optional: Try to set a specific voice
-            // You can get available voices using window.speechSynthesis.getVoices()
-            // and filter by language or name. This is an example:
-            const voices = window.speechSynthesis.getVoices();
-            const preferredVoice = voices.find(voice => voice.lang === langCode && voice.name.includes('Google') || voice.lang.startsWith(langCode.substring(0,2)));
-            if (preferredVoice) {
-                utterance.voice = preferredVoice;
-            } else {
-                // Fallback to a generic voice if preferred not found
-                const fallbackVoice = voices.find(voice => voice.lang === 'en-US' || voice.lang === 'en-GB');
-                if (fallbackVoice) {
-                    utterance.voice = fallbackVoice;
-                    console.warn(`Preferred voice for ${langCode} not found, using fallback English voice.`);
-                } else {
-                    console.warn("No suitable voice found, using browser default.");
-                }
+        if (!textToSpeak.trim()) {
+            setTtsMessage(`No valid ${languageLabel} text found to speak.`);
+            return;
+        }
+
+        setTtsMessage(`Generating ${languageLabel} audio...`);
+        try {
+            const response = await fetch(murfApiUrl, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${murfApiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    text: textToSpeak,
+                    voiceId: voiceConfig.voiceId,
+                    style: voiceConfig.style,
+                    multiNativeLocale: voiceConfig.multiNativeLocale,
+                    format: 'MP3',
+                    sampleRate: 24000,
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Murf AI API error: ${response.statusText}`);
             }
 
-
-            // Set properties (optional)
-            utterance.rate = 1.0; // 0.1 to 10
-            utterance.pitch = 1.0; // 0 to 2
-
-            utterance.onstart = () => {
-                setTtsMessage("Speaking...");
-            };
-
-            utterance.onend = () => {
-                setTtsMessage("Playback finished.");
-            };
-
-            utterance.onerror = (event) => {
-                console.error('SpeechSynthesis Utterance Error:', event.error);
-                setTtsMessage(`Speech error: ${event.error}.`);
-            };
-
-            // Stop any ongoing speech before starting a new one
-            window.speechSynthesis.cancel(); 
-            window.speechSynthesis.speak(utterance);
-        } else {
-            setTtsMessage("Text-to-Speech not supported in your browser.");
-            console.warn("SpeechSynthesis API not supported.");
+            const data = await response.json();
+            if (data.audioUrl) {
+                if (audioRef.current) {
+                    audioRef.current.src = data.audioUrl;
+                    audioRef.current.play();
+                    setTtsMessage(`Playing ${languageLabel} audio...`);
+                    audioRef.current.onended = () => setTtsMessage(`${languageLabel} playback finished.`);
+                    audioRef.current.onerror = () => setTtsMessage(`Error playing ${languageLabel} audio.`);
+                }
+            } else {
+                throw new Error('No audio URL returned by Murf AI.');
+            }
+        } catch (err) {
+            console.error(`Error generating ${languageLabel} audio:`, err);
+            setTtsMessage(`Failed to generate ${languageLabel} audio: ${err.message}`);
         }
     };
 
@@ -276,12 +268,10 @@ const App = () => {
                             setSelectedSlok(null);
                             setError(null);
                             setTtsMessage('');
-                            window.speechSynthesis.cancel(); // Stop any ongoing speech
+                            if (audioRef.current) audioRef.current.src = '';
                         }}
                         aria-label="Back to chapters list"
-                        className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-                    >
-                        <ChevronLeft className="w-5 h-5 mr-2" /> Back to Chapters
+                        className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition duration-                        <ChevronLeft className="w-5 h-5 mr-2" /> Back to Chapters
                     </button>
                 )}
                 <button
@@ -305,7 +295,7 @@ const App = () => {
             </nav>
 
             <div className="bg-white dark:bg-gray-700 p-6 rounded-xl shadow-lg mb-8 max-w-2xl mx-auto border border-gray-200 dark:border-gray-600">
-                <h2 className="text-2xl font-bold mb-4 text-indigo-700 dark:text-indigo-400 flex items-center">
+                <h2 className="text-2 font-bold mb-4 text-indigo-700 dark:text-indigo-400 flex items-center">
                     <Search className="w-6 h-6 mr-2" /> Get Specific Slok
                 </h2>
                 <form onSubmit={handleGetSlokSubmit} className="flex flex-col sm:flex-row gap-4">
@@ -313,7 +303,7 @@ const App = () => {
                         type="number"
                         placeholder="Chapter"
                         value={slokChapterInput}
-                        onChange={(e) => setSlokChapterInput(e.target.value)}
+                        onChange={(e => setTSlokChapterInput(e.target.value)}
                         className="flex-1 p-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                         min="1"
                         max="18"
@@ -323,7 +313,7 @@ const App = () => {
                         type="number"
                         placeholder="Verse"
                         value={slokVerseInput}
-                        onChange={(e) => setSlokVerseInput(e.target.value)}
+                        onChange={(e => setTSlokVerseInput(e.target.value)}
                         className="flex-1 p-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                         min="1"
                         max={slokChapterInput && parseInt(slokChapterInput) <= slokCounts.length ? slokCounts[parseInt(slokChapterInput) - 1] : undefined}
@@ -331,9 +321,8 @@ const App = () => {
                     />
                     <button
                         type="submit"
-                        className="px-6 py-3 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-                        aria-label="Fetch specific slok"
-                    >
+                            className="px-6 py-3 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+                        >
                         Get Slok
                     </button>
                 </form>
@@ -345,11 +334,11 @@ const App = () => {
                 </div>
             )}
             {error && (
-                <div className="bg-red-100 dark:bg-red-900 border border-red-400 text-red-700 dark:text-red-300 px-4 py-3 rounded-xl relative max-w-2xl mx-auto my-8 shadow-md" role="alert">
+                <div className="bg-red-100 dark:bg-red-900 border border-red-400 text-red-700 dark:text-red-300 px-4 py-300 rounded-xl relative max-w-2xl mx-auto my-3 shadow-md" role="alert">
                     <strong className="font-bold">Error!</strong>
                     <span className="block sm:inline ml-2">{error}</span>
                     <button onClick={() => setError(null)} className="absolute top-0 right-0 p-2" aria-label="Dismiss error">
-                        ×
+                        x
                     </button>
                 </div>
             )}
@@ -358,12 +347,12 @@ const App = () => {
                 <main>
                     {viewMode === 'chapters' && (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
-                            {chapters.map((chapter) => (
+                            {chapters.map((chapter => (
                                 <button
                                     key={chapter.chapter_number}
-                                    onClick={() => handleChapterClick(chapter.chapter_number)}
-                                    className="bg-white dark:bg-gray-700 p-6 rounded-xl shadow-lg cursor-pointer hover:shadow-xl transition duration-300 ease-in-out transform hover:-translate-y-1 border border-gray-200 dark:border-gray-600 text-left"
-                                    aria-label={`View details for Chapter ${chapter.chapter_number}`}
+                                        onClick={() => handleChapterClick(chapter.chapter_number)}
+                                    className="bg-white dark:bg-gray-700 p-6 rounded-xl shadow-lg cursor-pointer hover:shadow-md transition duration-300 ease-in-out transform hover:-translate-y-1 border border-gray-200 dark:border-gray-600 text-left"
+                                    aria-controls={`View details for Chapter ${chapter.chapter_number}`}
                                 >
                                     <h3 className="text-xl font-bold mb-2 text-indigo-700 dark:text-indigo-400">
                                         Chapter {chapter.chapter_number}: {chapter.name}
@@ -371,7 +360,7 @@ const App = () => {
                                     <p className="text-gray-600 dark:text-gray-300 text-sm">
                                         <strong className="text-gray-800 dark:text-gray-200">Translation:</strong> {chapter.translation}
                                     </p>
-                                    <p className="text-gray-600 dark:text-gray-300 text-sm mt-2">
+                                    <p className="text-gray-600 dark:text-gray-300 sm:mt-2">
                                         <strong className="text-gray-800 dark:text-gray-200">Summary:</strong> {chapter.summary.en.substring(0, 150)}...
                                     </p>
                                     <span className="mt-4 text-indigo-500 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-500 font-semibold text-sm flex items-center">
@@ -398,12 +387,12 @@ const App = () => {
                             </p>
                             <h3 className="text-2xl font-bold mb-4 text-indigo-700 dark:text-indigo-400">Verses in this Chapter</h3>
                             <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-8 gap-3">
-                                {Array.from({ length: selectedChapter.verses_count }, (_, i) => i + 1).map((verseNum) => (
+                                {Array.from({ length: selectedChapter.verses_count }, (_, i) => i + 1).map((verseNum => (
                                     <button
                                         key={verseNum}
-                                        onClick={() => handleVerseClick(selectedChapter.chapter_number, verseNum)}
+                                            onClick={() => handleVerseClick(selectedChapter.chapter_number, verseNum)}
                                         className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-gray-800 dark:text-gray-200 font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-900 transition duration-200 ease-in-out transform hover:scale-105 shadow-sm"
-                                        aria-label={`View verse ${verseNum} of chapter ${selectedChapter.chapter_number}`}
+                                        aria-controls={`View verse ${verseNum} of chapter ${selectedChapter.chapter_number}`}
                                     >
                                         {verseNum}
                                     </button>
@@ -417,33 +406,58 @@ const App = () => {
                             <h2 className="text-3xl font-bold mb-4 text-indigo-700 dark:text-indigo-400">Slok Details</h2>
                             {prepareSlokForDisplay(selectedSlok)}
                             <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
-                                <button
-                                    onClick={handleTextToSpeech}
-                                    // isSpeaking state is no longer relevant for the Web Speech API as it's not an async network call.
-                                    // Keeping disabled for isFetching to prevent speaking while new slok is loading.
-                                    disabled={isFetching} 
-                                    className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-                                    aria-label="Listen to slok audio"
-                                >
-                                    <Volume2 className="w-5 h-5 mr-2" />
-                                    Listen to Slok
-                                </button>
+                                <div className="flex flex-col sm:flex-row gap-4">
+                                    {selectedSlok.tej?.ht && (
+                                        <button
+                                            onClick={() => handleTextToSpeech('hindi')}
+                                            disabled={isFetching}
+                                            className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:bg-blue-400 disabled:cursor-not-allowed"
+                                            aria-label="Listen to Hindi translation"
+                                        >
+                                            <Volume2 className="w-5 h-5 mr-2" /> Hindi Translation
+                                        </button>
+                                    )}
+                                    {selectedSlok.gambir?.et && (
+                                        <button
+                                            onClick={() => handleTextToSpeech('english')}
+                                            disabled={isFetching}
+                                            className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:disabled:bg-blue-400 disabled:cursor-not-allowed"
+                                            aria-label="Listen to audio for English translation"
+                                            >
+                                            <Volume2 className="w-5 h-5 mr-2" /> English Translation
+                                        </button>
+                                    )}
+                                    {selectedSlok.siva?.et && (
+                                        <button
+                                            onClick={() => handleTextToSpeech('sivananda')}
+                                            disabled={isLoading}
+                                            className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:disabled:bg-blue-400 disabled:cursor-not-allowed"
+                                            aria-label="Listen to audio for Sivananda translation"
+                                            >
+                                            <Volume2 className="w-5 h-5 mr-2" /> Sivananda Translation
+                                        </button>
+                                    })}
+                                </div>
                                 {ttsMessage && (
-                                    <p className={`mt-2 text-sm ${ttsMessage.includes('Error') ? 'text-red-500' : 'text-gray-600 dark:text-gray-400'}`}>
+                                    <p className={`mt-2 text-sm ${tTtsMessage.includes('Error') ? 'text-red-500' : 'text-gray-700 dark:text-gray-400'}`}>
                                         {ttsMessage}
                                     </p>
                                 )}
-                                {/* The audio element is no longer needed for playback with SpeechSynthesis API */}
-                                {/* <audio ref={audioRef} controls className="w-full mt-4 rounded-lg bg-gray-100 dark:bg-gray-800" aria-label="Audio player for slok"></audio> */}
+                                <audio
+                                    ref={audioRef}
+                                    controls
+                                    className="w-full mt-4 rounded-lg bg-gray-200 dark:bg-gray-800"
+                                    aria-label="Audio control for audio player for slok"
+                                ></audio>
                             </div>
                         </div>
                     )}
                 </main>
-            )}
+            ))}
 
             <footer className="text-center text-gray-600 dark:text-gray-400 mt-12 text-sm">
                 <p>Hare Krishna! 🙏</p>
-                <p>© {new Date().getFullYear()} Bhagavad Gita Wisdom App. All rights reserved.</p>
+                <p>&copy; {new Date().getFullYear()} Bhagavad Gita Wisdom App. All rights reserved.</p>
             </footer>
         </div>
     );
