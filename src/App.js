@@ -30,6 +30,13 @@ const App = () => {
     const murfApiKey = 'ap2_676d27b1-565a-4e5e-b102-2c9dfc46d376';
     const murfApiUrl = 'https://api.murf.ai/v1/speech/stream'; 
 
+    // Function to get the name of a voice ID (for logging/display in UI)
+    // Moved this function definition inside the App component to ensure it's in scope
+    const getVoiceName = (voiceId) => {
+        const voice = murfVoices.find(v => v.id === voiceId);
+        return voice ? voice.name : voiceId; 
+    };
+
     // Function to fetch all chapters
     const fetchChapters = async () => {
         setLoading(true);
@@ -162,7 +169,7 @@ const App = () => {
             if (data && Array.isArray(data.voices)) {
                 setMurfVoices(data.voices);
 
-                // Try to find the user's preferred voices first
+                // Try to find the user's preferred voices first (Ishani for English, Naomi for Hindi)
                 const ishaniVoice = data.voices.find(voice => voice.id === 'bn-IN-ishani');
                 const naomiVoice = data.voices.find(voice => voice.id === 'en-US-naomi');
 
