@@ -1,31 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronLeft, BookOpen, Search, Shuffle, ChevronRight, Volume2 } from 'lucide-react'; // Importing icons, added Volume2 for TTS
+import { ChevronLeft, BookOpen, Search, Shuffle, ChevronRight, Volume2 } from 'lucide-react';
 
-// Main App component
 const App = () => {
-    // State variables for managing data and UI
-    const [chapters, setChapters] = useState([]); // Stores the list of chapters
-    const [selectedChapter, setSelectedChapter] = useState(null); // Stores the currently selected chapter for detailed view
-    const [selectedSlok, setSelectedSlok] = useState(null); // Stores the currently selected slok details
-    const [viewMode, setViewMode] = useState('chapters'); // Controls the current view: 'chapters', 'slokDetail', 'chapterDetail'
-    const [loading, setLoading] = useState(true); // Manages loading state for API calls
-    const [error, setError] = useState(null); // Stores any error messages
-    const [slokChapterInput, setSlokChapterInput] = useState(''); // Input for specific slok chapter
-    const [slokVerseInput, setSlokVerseInput] = useState(''); // Input for specific slok verse
+    const [chapters, setChapters] = useState([]);
+    const [selectedChapter, setSelectedChapter] = useState(null);
+    const [selectedSlok, setSelectedSlok] = useState(null);
+    const [viewMode, setViewMode] = useState('chapters');
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [slokChapterInput, setSlokChapterInput] = useState('');
+    const [slokVerseInput, setSlokVerseInput] = useState('');
+    const [isSpeaking, setIsSpeaking] = useState(false);
+    const [ttsMessage, setTtsMessage] = useState('');
+    const [isFetching, setIsFetching] = useState(false);
+    const audioRef = useRef(null);
 
-    // Text-to-Speech specific states and ref
-    const [isSpeaking, setIsSpeaking] = useState(false); // State for TTS loading
-    const [ttsMessage, setTtsMessage] = useState(''); // Message for TTS status
-    const audioRef = useRef(null); // Ref for the audio player element
-
-    // Base URL for the Bhagavad Gita API
     const bgBaseUrl = "https://vedicscriptures.github.io";
-
-    // Array containing the number of sloks in each chapter (0-indexed for convenience)
-    // Chapter 1 has 47 sloks, Chapter 2 has 72, etc.
+    const TTS_API_URL = "https://text-to-speech.api-droid.workers.dev/";
     const slokCounts = [47, 72, 43, 42, 29, 47, 30, 28, 34, 42, 55, 20, 35, 27, 20, 24, 28, 78];
 
-    // Function to fetch all chapters
     const fetchChapters = async () => {
         setLoading(true);
         setError(null);
@@ -35,7 +28,15 @@ const App = () => {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             const data = await response.json();
+            if (!Array.isArray(data)) {
+                throw new Error('Invalid chapters data received.');
+            }
             setChapters(data);
+            data.forEach(chapter => {
+                if (chapter.verses_count !== slokCounts[chapter.chapter_number - 1]) {
+                    console.warn(`Verse count mismatch for Chapter ${chapter.chapter_number}: API says ${chapter.verses_count}, slokCounts says ${slokCounts[chapter.chapter_number - 1]}`);
+                }
+            });
         } catch (err) {
             console.error("Error fetching chapters:", err);
             setError("Failed to load chapters. Please try again later.");
@@ -44,159 +45,127 @@ const App = () => {
         }
     };
 
-    // Function to fetch a specific slok by chapter and verse
     const fetchSpecificSlok = async (chapter, verse) => {
+        if (isFetching) return;
+        setIsFetching(true);
         setLoading(true);
         setError(null);
-        setSelectedSlok(null); // Clear previous slok
-        setTtsMessage(''); // Clear TTS message
-        if (audioRef.current) audioRef.current.src = ''; // Clear audio player
+        setSelectedSlok(null);
+        setTtsMessage('');
+        if (audioRef.current) audioRef.current.src = '';
         try {
             const response = await fetch(`${bgBaseUrl}/slok/${chapter}/${verse}`, { redirect: 'follow' });
             if (!response.ok) {
-                // If the response is not OK, it means the slok doesn't exist or there's an API issue.
-                throw new Error(`Could not fetch the requested Slok. Please check the chapter and verse numbers. (Chapter: ${chapter}, Verse: ${verse})`);
+                throw new Error(`Could not fetch slok: ${response.statusText}`);
             }
             const slok = await response.json();
+            if (!slok || typeof slok !== 'object' || !slok.chapter) {
+                throw new Error('Invalid slok data received.');
+            }
             setSelectedSlok(slok);
-            setViewMode('slokDetail'); // Switch to slok detail view
+            setViewMode('slokDetail');
         } catch (err) {
             console.error("Error fetching specific slok:", err);
-            setError(err.message || "Failed to fetch specific slok. Please check the chapter and verse.");
+            setError(err.message || "Failed to fetch slok. Please check the chapter and verse.");
         } finally {
             setLoading(false);
+            setIsFetching(false);
         }
     };
 
-    // Function to fetch a random slok
     const fetchRandomSlok = async () => {
+        if (isFetching) return;
+        setIsFetching(true);
         setLoading(true);
         setError(null);
-        setSelectedSlok(null); // Clear previous slok
-        setTtsMessage(''); // Clear TTS message
-        if (audioRef.current) audioRef.current.src = ''; // Clear audio player
+        setSelectedSlok(null);
+        setTtsMessage('');
+        if (audioRef.current) audioRef.current.src = '';
         try {
-            // Randomly select a chapter (1 to 18)
             const chapter = Math.floor(Math.random() * slokCounts.length) + 1;
-            // Randomly select a verse within the chosen chapter's limits
             const verse = Math.floor(Math.random() * slokCounts[chapter - 1]) + 1;
-            const slokId = `${chapter}/${verse}`;
-
-            const response = await fetch(`${bgBaseUrl}/slok/${slokId}`, { redirect: 'follow' });
+            const response = await fetch(`${bgBaseUrl}/slok/${chapter}/${verse}`, { redirect: 'follow' });
             if (!response.ok) {
-                throw new Error(`Failed to fetch random slok. HTTP error! status: ${response.status}`);
+                throw new Error(`Failed to fetch random slok: ${response.statusText}`);
             }
             const slok = await response.json();
+            if (!slok || typeof slok !== 'object' || !slok.chapter) {
+                throw new Error('Invalid slok data received.');
+            }
             setSelectedSlok(slok);
-            setViewMode('slokDetail'); // Switch to slok detail view
+            setViewMode('slokDetail');
         } catch (err) {
             console.error("Error fetching random slok:", err);
             setError("Failed to fetch a random slok. Please try again.");
         } finally {
             setLoading(false);
+            setIsFetching(false);
         }
     };
 
-    // Function to handle fetching the next slok
     const handleNextSlok = () => {
         if (!selectedSlok) {
-            // If no slok is currently selected, do nothing or fetch a default/random one.
-            setError("No current slok to find the next one. Try fetching a slok first.");
+            setError("No current slok to find the next one.");
             return;
         }
-
         let nextChapter = selectedSlok.chapter;
         let nextVerse = selectedSlok.verse + 1;
-
-        // Check if the current verse is the last in its chapter
         if (nextVerse > slokCounts[selectedSlok.chapter - 1]) {
-            nextChapter += 1; // Move to the next chapter
-            nextVerse = 1; // Start from the first verse of the new chapter
-
-            // Check if the next chapter exceeds the total number of chapters
+            nextChapter += 1;
+            nextVerse = 1;
             if (nextChapter > slokCounts.length) {
-                nextChapter = 1; // Loop back to the first chapter
-                nextVerse = 1; // First verse of the first chapter
+                nextChapter = 1;
             }
         }
-        // Fetch the calculated next slok
         fetchSpecificSlok(nextChapter, nextVerse);
     };
 
-    // Function to handle Text-to-Speech conversion
     const handleTextToSpeech = async () => {
         if (!selectedSlok) {
             setTtsMessage("No slok selected to speak.");
             return;
         }
-
-        // Prioritize English translation, then fall back to Sanskrit verse
         let textToSpeak = '';
-        let voiceSound = 'sound7'; // Default Arabic voice from your discovery
-
-        if (selectedSlok.gambir && selectedSlok.gambir.et) {
-            textToSpeak = selectedSlok.gambir.et; // English translation
+        if (selectedSlok.gambir?.et) {
+            textToSpeak = selectedSlok.gambir.et;
             setTtsMessage("Speaking English translation...");
-            // Consider changing voiceSound if an English voice is available and you detect English text
-            // For now, stick to 'sound7' as it's the one you provided.
         } else if (selectedSlok.slok) {
-            textToSpeak = selectedSlok.slok; // Sanskrit verse
-            setTtsMessage("Speaking Sanskrit verse (may not sound ideal with Arabic voice)...");
-        } else {
-            setTtsMessage("No text available to speak for this slok.");
-            return;
+            textToSpeak = selectedSlok.slok;
+            setTtsMessage("Speaking Sanskrit verse...");
         }
-
-        // If a purport exists, consider adding it to the spoken text.
-        // For simplicity, we'll just speak the main slok/translation for now.
-        // if (selectedSlok.purport) {
-        //     textToSpeak += `\nPurport: ${selectedSlok.purport}`;
-        // }
-
         if (!textToSpeak.trim()) {
             setTtsMessage("No valid text found to speak.");
             return;
         }
-
         setIsSpeaking(true);
         setTtsMessage("Generating speech...");
-
-        const TTS_API_URL = "https://text-to-speech.api-droid.workers.dev/";
-
         try {
-            if (audioRef.current) audioRef.current.src = ''; // Clear previous audio
-            
+            if (audioRef.current) audioRef.current.src = '';
             const response = await fetch(TTS_API_URL, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    text: textToSpeak,
-                    sound: voiceSound
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: textToSpeak, sound: 'sound7' })
             });
-
             if (!response.ok) {
-                const errorResponse = await response.text();
-                throw new Error(`TTS API request failed: ${response.status} ${response.statusText} - ${errorResponse}`);
+                throw new Error(`TTS API request failed: ${response.statusText}`);
             }
-
             const responseJson = await response.json();
-
-            if (responseJson && "audioContent" in responseJson) {
+            if (responseJson && "audioContent" in responseJson && typeof responseJson.audioContent === 'string') {
                 const base64Audio = responseJson.audioContent;
-                const audioUrl = `data:audio/mp3;base64,${base64Audio}`; 
-                
+                if (!base64Audio.match(/^[A-Za-z0-9+/=]+$/)) {
+                    throw new Error('Invalid base64 audio content.');
+                }
+                const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
                 if (audioRef.current) {
                     audioRef.current.src = audioUrl;
-                    audioRef.current.play();
+                    audioRef.current.play().catch(err => {
+                        setTtsMessage(`Audio playback failed: ${err.message}`);
+                    });
                 }
                 setTtsMessage("Speech generated successfully! Playing audio.");
             } else {
                 setTtsMessage("Audio data not found in the TTS response.");
             }
-
         } catch (err) {
             console.error('Error in Text-to-Speech:', err);
             setTtsMessage(`Error generating speech: ${err.message}.`);
@@ -205,20 +174,19 @@ const App = () => {
         }
     };
 
-    // Prepares the slok data for display in a structured format
     const prepareSlokForDisplay = (slok) => {
         if (!slok) return '';
         return (
             <div>
                 <p className="font-semibold text-lg mb-2">Chapter {slok.chapter}, Verse {slok.verse}</p>
                 <p className="text-gray-700 dark:text-gray-300 font-sans text-xl my-4 italic">"{slok.slok}"</p>
-                {slok.tej && slok.tej.ht && (
+                {slok.tej?.ht && (
                     <p className="mb-2"><strong className="text-gray-800 dark:text-gray-200">Hindi Translation:</strong> {slok.tej.ht}</p>
                 )}
-                {slok.gambir && slok.gambir.et && (
+                {slok.gambir?.et && (
                     <p className="mb-2"><strong className="text-gray-800 dark:text-gray-200">English Translation:</strong> {slok.gambir.et}</p>
                 )}
-                {slok.siva && slok.siva.et && (
+                {slok.siva?.et && (
                     <p className="mb-2"><strong className="text-gray-800 dark:text-gray-200">Swami Sivananda English Translation:</strong> {slok.siva.et}</p>
                 )}
                 {slok.purport && (
@@ -230,36 +198,31 @@ const App = () => {
         );
     };
 
-    // Handle form submission for specific slok
     const handleGetSlokSubmit = (e) => {
-        e.preventDefault(); // Prevent default form submission behavior
+        e.preventDefault();
         const chapter = parseInt(slokChapterInput, 10);
         const verse = parseInt(slokVerseInput, 10);
-
-        // Input validation
         if (isNaN(chapter) || isNaN(verse) || chapter <= 0 || verse <= 0 || chapter > slokCounts.length || verse > (slokCounts[chapter - 1] || 0)) {
             setError("Please enter valid positive numbers for chapter (1-18) and verse within its range.");
             return;
         }
+        setError(null);
         fetchSpecificSlok(chapter, verse);
     };
 
-    // Handle chapter card click to show chapter details
     const handleChapterClick = (chapterNumber) => {
         const chapter = chapters.find(c => c.chapter_number === chapterNumber);
         setSelectedChapter(chapter);
-        setViewMode('chapterDetail'); // A new view mode to show chapter summary before verses
+        setViewMode('chapterDetail');
     };
 
-    // Handle verse button click from chapter detail view to fetch specific slok
     const handleVerseClick = (chapterNumber, verseNumber) => {
         fetchSpecificSlok(chapterNumber, verseNumber);
     };
 
-    // Initial fetch of chapters when the component mounts
     useEffect(() => {
         fetchChapters();
-    }, []); // Empty dependency array ensures this runs only once on mount
+    }, []);
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-purple-100 dark:from-gray-900 dark:to-gray-800 text-gray-900 dark:text-gray-100 font-sans p-4 sm:p-6 lg:p-8">
@@ -272,44 +235,43 @@ const App = () => {
                 </p>
             </header>
 
-            {/* Navigation and global actions */}
             <nav className="flex flex-col sm:flex-row justify-center items-center gap-4 mb-8">
-                {/* 'Back to Chapters' button, shown when not in the main chapters view */}
                 {viewMode !== 'chapters' && (
                     <button
                         onClick={() => {
                             setViewMode('chapters');
                             setSelectedChapter(null);
                             setSelectedSlok(null);
-                            setError(null); // Clear any errors
-                            setTtsMessage(''); // Clear TTS message
-                            if (audioRef.current) audioRef.current.src = ''; // Clear audio player
+                            setError(null);
+                            setTtsMessage('');
+                            if (audioRef.current) audioRef.current.src = '';
                         }}
+                        aria-label="Back to chapters list"
                         className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
                     >
                         <ChevronLeft className="w-5 h-5 mr-2" /> Back to Chapters
                     </button>
                 )}
-                {/* 'Random Slok' button, always available */}
                 <button
                     onClick={fetchRandomSlok}
-                    className="flex items-center px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+                    disabled={isFetching || loading}
+                    aria-label="Fetch a random slok"
+                    className="flex items-center px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50"
                 >
                     <Shuffle className="w-5 h-5 mr-2" /> Random Slok
                 </button>
-
-                {/* 'Next Slok' button, only shown when a slok is being displayed */}
                 {viewMode === 'slokDetail' && (
                     <button
                         onClick={handleNextSlok}
-                        className="flex items-center px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+                        disabled={isFetching || loading}
+                        aria-label="Fetch next slok"
+                        className="flex items-center px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50"
                     >
                         Next Slok <ChevronRight className="w-5 h-5 ml-2" />
                     </button>
                 )}
             </nav>
 
-            {/* Search/Get Specific Slok Form */}
             <div className="bg-white dark:bg-gray-700 p-6 rounded-xl shadow-lg mb-8 max-w-2xl mx-auto border border-gray-200 dark:border-gray-600">
                 <h2 className="text-2xl font-bold mb-4 text-indigo-700 dark:text-indigo-400 flex items-center">
                     <Search className="w-6 h-6 mr-2" /> Get Specific Slok
@@ -321,8 +283,9 @@ const App = () => {
                         value={slokChapterInput}
                         onChange={(e) => setSlokChapterInput(e.target.value)}
                         className="flex-1 p-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-                        min="1" // Minimum value for chapter
-                        max="18" // Maximum value for chapter
+                        min="1"
+                        max="18"
+                        aria-label="Chapter number"
                     />
                     <input
                         type="number"
@@ -330,41 +293,45 @@ const App = () => {
                         value={slokVerseInput}
                         onChange={(e) => setSlokVerseInput(e.target.value)}
                         className="flex-1 p-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
-                        min="1" // Minimum value for verse
-                        // Max value for verse will depend on the chapter, but generally it's handled by validation
+                        min="1"
+                        max={slokChapterInput && parseInt(slokChapterInput) <= slokCounts.length ? slokCounts[parseInt(slokChapterInput) - 1] : undefined}
+                        aria-label="Verse number"
                     />
                     <button
                         type="submit"
                         className="px-6 py-3 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+                        aria-label="Fetch specific slok"
                     >
                         Get Slok
                     </button>
                 </form>
             </div>
 
-            {/* Loading and Error Indicators */}
             {loading && (
                 <div className="text-center text-indigo-700 dark:text-indigo-300 text-xl font-medium my-8">
-                    Loading... Please wait for a few seconds.
+                    Loading... Please wait.
                 </div>
             )}
             {error && (
                 <div className="bg-red-100 dark:bg-red-900 border border-red-400 text-red-700 dark:text-red-300 px-4 py-3 rounded-xl relative max-w-2xl mx-auto my-8 shadow-md" role="alert">
                     <strong className="font-bold">Error!</strong>
                     <span className="block sm:inline ml-2">{error}</span>
+                    <button onClick={() => setError(null)} className="absolute top-0 right-0 p-2" aria-label="Dismiss error">
+                        ×
+                    </button>
                 </div>
             )}
 
-            {/* Main content area based on viewMode */}
             {!loading && !error && (
                 <main>
                     {viewMode === 'chapters' && (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
                             {chapters.map((chapter) => (
-                                <div
+                                <button
                                     key={chapter.chapter_number}
                                     onClick={() => handleChapterClick(chapter.chapter_number)}
-                                    className="bg-white dark:bg-gray-700 p-6 rounded-xl shadow-lg cursor-pointer hover:shadow-xl transition duration-300 ease-in-out transform hover:-translate-y-1 border border-gray-200 dark:border-gray-600"
+                                    className="bg-white dark:bg-gray-700 p-6 rounded-xl shadow-lg cursor-pointer hover:shadow-xl transition duration-300 ease-in-out transform hover:-translate-y-1 border border-gray-200 dark:border-gray-600 text-left"
+                                    aria-label={`View details for Chapter ${chapter.chapter_number}`}
                                 >
                                     <h3 className="text-xl font-bold mb-2 text-indigo-700 dark:text-indigo-400">
                                         Chapter {chapter.chapter_number}: {chapter.name}
@@ -375,10 +342,10 @@ const App = () => {
                                     <p className="text-gray-600 dark:text-gray-300 text-sm mt-2">
                                         <strong className="text-gray-800 dark:text-gray-200">Summary:</strong> {chapter.summary.en.substring(0, 150)}...
                                     </p>
-                                    <button className="mt-4 text-indigo-500 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-500 font-semibold text-sm flex items-center">
+                                    <span className="mt-4 text-indigo-500 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-500 font-semibold text-sm flex items-center">
                                         Read More <BookOpen className="w-4 h-4 ml-1" />
-                                    </button>
-                                </div>
+                                    </span>
+                                </button>
                             ))}
                         </div>
                     )}
@@ -397,15 +364,14 @@ const App = () => {
                             <p className="mb-6 text-gray-600 dark:text-gray-400">
                                 <strong className="text-gray-800 dark:text-gray-200">Summary:</strong> {selectedChapter.summary.en}
                             </p>
-
                             <h3 className="text-2xl font-bold mb-4 text-indigo-700 dark:text-indigo-400">Verses in this Chapter</h3>
-                            <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-8 gap-3">
-                                {/* Generate verse buttons based on slokCounts for the selected chapter */}
+                            <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-8 gap-3">
                                 {Array.from({ length: selectedChapter.verses_count }, (_, i) => i + 1).map((verseNum) => (
                                     <button
                                         key={verseNum}
                                         onClick={() => handleVerseClick(selectedChapter.chapter_number, verseNum)}
                                         className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-gray-800 dark:text-gray-200 font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-900 transition duration-200 ease-in-out transform hover:scale-105 shadow-sm"
+                                        aria-label={`View verse ${verseNum} of chapter ${selectedChapter.chapter_number}`}
                                     >
                                         {verseNum}
                                     </button>
@@ -418,24 +384,22 @@ const App = () => {
                         <div className="bg-white dark:bg-gray-700 p-6 rounded-xl shadow-lg max-w-3xl mx-auto border border-gray-200 dark:border-gray-600">
                             <h2 className="text-3xl font-bold mb-4 text-indigo-700 dark:text-indigo-400">Slok Details</h2>
                             {prepareSlokForDisplay(selectedSlok)}
-
-                            {/* Text-to-Speech Section */}
                             <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
                                 <button
                                     onClick={handleTextToSpeech}
-                                    disabled={isSpeaking}
+                                    disabled={isSpeaking || isFetching}
                                     className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    aria-label="Listen to slok audio"
                                 >
                                     <Volume2 className="w-5 h-5 mr-2" />
                                     {isSpeaking ? 'Generating Audio...' : 'Listen to Slok'}
                                 </button>
                                 {ttsMessage && (
-                                    // CORRECTED LINE: Removed extra single quote at the end of the string literal within the template.
                                     <p className={`mt-2 text-sm ${ttsMessage.includes('Error') ? 'text-red-500' : 'text-gray-600 dark:text-gray-400'}`}>
                                         {ttsMessage}
                                     </p>
                                 )}
-                                <audio ref={audioRef} controls className="w-full mt-4 rounded-lg bg-gray-100 dark:bg-gray-800"></audio>
+                                <audio ref={audioRef} controls className="w-full mt-4 rounded-lg bg-gray-100 dark:bg-gray-800" aria-label="Audio player for slok"></audio>
                             </div>
                         </div>
                     )}
@@ -444,11 +408,10 @@ const App = () => {
 
             <footer className="text-center text-gray-600 dark:text-gray-400 mt-12 text-sm">
                 <p>Hare Krishna! 🙏</p>
-                <p>&copy; {new Date().getFullYear()} Bhagavad Gita Wisdom App. All rights reserved.</p>
+                <p>© {new Date().getFullYear()} Bhagavad Gita Wisdom App. All rights reserved.</p>
             </footer>
         </div>
     );
 };
 
 export default App;
-```
