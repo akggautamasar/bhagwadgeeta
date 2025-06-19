@@ -430,6 +430,7 @@ const App = () => {
                                     {isSpeaking ? 'Generating Audio...' : 'Listen to Slok'}
                                 </button>
                                 {ttsMessage && (
+                                    // CORRECTED LINE: Removed extra single quote at the end of the string literal within the template.
                                     <p className={`mt-2 text-sm ${ttsMessage.includes('Error') ? 'text-red-500' : 'text-gray-600 dark:text-gray-400'}`}>
                                         {ttsMessage}
                                     </p>
