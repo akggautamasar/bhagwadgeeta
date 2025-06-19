@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronLeft, BookOpen, Search, Shuffle, ChevronRight } from 'lucide-react'; // Importing icons
+import React, { useState, useEffect, useRef } from 'react';
+import { ChevronLeft, BookOpen, Search, Shuffle, ChevronRight, Volume2 } from 'lucide-react'; // Importing icons, added Volume2 for TTS
 
 // Main App component
 const App = () => {
@@ -12,6 +12,11 @@ const App = () => {
     const [error, setError] = useState(null); // Stores any error messages
     const [slokChapterInput, setSlokChapterInput] = useState(''); // Input for specific slok chapter
     const [slokVerseInput, setSlokVerseInput] = useState(''); // Input for specific slok verse
+
+    // Text-to-Speech specific states and ref
+    const [isSpeaking, setIsSpeaking] = useState(false); // State for TTS loading
+    const [ttsMessage, setTtsMessage] = useState(''); // Message for TTS status
+    const audioRef = useRef(null); // Ref for the audio player element
 
     // Base URL for the Bhagavad Gita API
     const bgBaseUrl = "https://vedicscriptures.github.io";
@@ -44,6 +49,8 @@ const App = () => {
         setLoading(true);
         setError(null);
         setSelectedSlok(null); // Clear previous slok
+        setTtsMessage(''); // Clear TTS message
+        if (audioRef.current) audioRef.current.src = ''; // Clear audio player
         try {
             const response = await fetch(`${bgBaseUrl}/slok/${chapter}/${verse}`, { redirect: 'follow' });
             if (!response.ok) {
@@ -66,6 +73,8 @@ const App = () => {
         setLoading(true);
         setError(null);
         setSelectedSlok(null); // Clear previous slok
+        setTtsMessage(''); // Clear TTS message
+        if (audioRef.current) audioRef.current.src = ''; // Clear audio player
         try {
             // Randomly select a chapter (1 to 18)
             const chapter = Math.floor(Math.random() * slokCounts.length) + 1;
@@ -112,6 +121,88 @@ const App = () => {
         }
         // Fetch the calculated next slok
         fetchSpecificSlok(nextChapter, nextVerse);
+    };
+
+    // Function to handle Text-to-Speech conversion
+    const handleTextToSpeech = async () => {
+        if (!selectedSlok) {
+            setTtsMessage("No slok selected to speak.");
+            return;
+        }
+
+        // Prioritize English translation, then fall back to Sanskrit verse
+        let textToSpeak = '';
+        let voiceSound = 'sound7'; // Default Arabic voice from your discovery
+
+        if (selectedSlok.gambir && selectedSlok.gambir.et) {
+            textToSpeak = selectedSlok.gambir.et; // English translation
+            setTtsMessage("Speaking English translation...");
+            // Consider changing voiceSound if an English voice is available and you detect English text
+            // For now, stick to 'sound7' as it's the one you provided.
+        } else if (selectedSlok.slok) {
+            textToSpeak = selectedSlok.slok; // Sanskrit verse
+            setTtsMessage("Speaking Sanskrit verse (may not sound ideal with Arabic voice)...");
+        } else {
+            setTtsMessage("No text available to speak for this slok.");
+            return;
+        }
+
+        // If a purport exists, consider adding it to the spoken text.
+        // For simplicity, we'll just speak the main slok/translation for now.
+        // if (selectedSlok.purport) {
+        //     textToSpeak += `\nPurport: ${selectedSlok.purport}`;
+        // }
+
+        if (!textToSpeak.trim()) {
+            setTtsMessage("No valid text found to speak.");
+            return;
+        }
+
+        setIsSpeaking(true);
+        setTtsMessage("Generating speech...");
+
+        const TTS_API_URL = "https://text-to-speech.api-droid.workers.dev/";
+
+        try {
+            if (audioRef.current) audioRef.current.src = ''; // Clear previous audio
+            
+            const response = await fetch(TTS_API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    text: textToSpeak,
+                    sound: voiceSound
+                })
+            });
+
+            if (!response.ok) {
+                const errorResponse = await response.text();
+                throw new Error(`TTS API request failed: ${response.status} ${response.statusText} - ${errorResponse}`);
+            }
+
+            const responseJson = await response.json();
+
+            if (responseJson && "audioContent" in responseJson) {
+                const base64Audio = responseJson.audioContent;
+                const audioUrl = `data:audio/mp3;base64,${base64Audio}`; 
+                
+                if (audioRef.current) {
+                    audioRef.current.src = audioUrl;
+                    audioRef.current.play();
+                }
+                setTtsMessage("Speech generated successfully! Playing audio.");
+            } else {
+                setTtsMessage("Audio data not found in the TTS response.");
+            }
+
+        } catch (err) {
+            console.error('Error in Text-to-Speech:', err);
+            setTtsMessage(`Error generating speech: ${err.message}.`);
+        } finally {
+            setIsSpeaking(false);
+        }
     };
 
     // Prepares the slok data for display in a structured format
@@ -191,6 +282,8 @@ const App = () => {
                             setSelectedChapter(null);
                             setSelectedSlok(null);
                             setError(null); // Clear any errors
+                            setTtsMessage(''); // Clear TTS message
+                            if (audioRef.current) audioRef.current.src = ''; // Clear audio player
                         }}
                         className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
                     >
@@ -325,6 +418,24 @@ const App = () => {
                         <div className="bg-white dark:bg-gray-700 p-6 rounded-xl shadow-lg max-w-3xl mx-auto border border-gray-200 dark:border-gray-600">
                             <h2 className="text-3xl font-bold mb-4 text-indigo-700 dark:text-indigo-400">Slok Details</h2>
                             {prepareSlokForDisplay(selectedSlok)}
+
+                            {/* Text-to-Speech Section */}
+                            <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
+                                <button
+                                    onClick={handleTextToSpeech}
+                                    disabled={isSpeaking}
+                                    className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <Volume2 className="w-5 h-5 mr-2" />
+                                    {isSpeaking ? 'Generating Audio...' : 'Listen to Slok'}
+                                </button>
+                                {ttsMessage && (
+                                    <p className={`mt-2 text-sm ${ttsMessage.includes('Error') ? 'text-red-500' : 'text-gray-600 dark:text-gray-400'}`}>
+                                        {ttsMessage}
+                                    </p>
+                                )}
+                                <audio ref={audioRef} controls className="w-full mt-4 rounded-lg bg-gray-100 dark:bg-gray-800"></audio>
+                            </div>
                         </div>
                     )}
                 </main>
@@ -339,3 +450,4 @@ const App = () => {
 };
 
 export default App;
+```
