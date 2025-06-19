@@ -19,7 +19,7 @@ const App = () => {
     const bgBaseUrl = "https://vedicscriptures.github.io";
     const slokCounts = [47, 72, 43, 42, 29, 47, 30, 28, 34, 42, 55, 20, 35, 27, 20, 24, 28, 78];
     const murfApiKey = 'ap2_676d27b1-565a-4e5e-b102-2c9dfc46d376';
-    const murfApiUrl = 'https://api.murf.ai/v1/speech/generate';
+    const murfApiUrl = 'https://api.murf.ai/v1/speech/stream';
 
     // Function to fetch all chapters
     const fetchChapters = async () => {
@@ -125,7 +125,7 @@ const App = () => {
         fetchSpecificSlok(nextChapter, nextVerse);
     };
 
-    // Function to handle Text-to-Speech with Murf AI
+    // Function to handle Text-to-Speech with Murf AI streaming API
     const handleTextToSpeech = async (translationType) => {
         if (!selectedSlok) {
             setTtsMessage("No slok selected to speak.");
@@ -158,13 +158,14 @@ const App = () => {
             return;
         }
 
-        setTtsMessage(`Generating ${languageLabel} audio...`);
+        setTtsMessage(`Streaming ${languageLabel} audio...`);
         try {
             const response = await fetch(murfApiUrl, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${murfApiKey}`,
                     'Content-Type': 'application/json',
+                    'Accept': 'audio/mpeg',
                 },
                 body: JSON.stringify({
                     text: textToSpeak,
@@ -177,24 +178,29 @@ const App = () => {
             });
 
             if (!response.ok) {
-                throw new Error(`Murf AI API error: ${response.statusText}`);
+                throw new Error(`Murf AI streaming API error: ${response.statusText}`);
             }
 
-            const data = await response.json();
-            if (data.audioUrl) {
-                if (audioRef.current) {
-                    audioRef.current.src = data.audioUrl;
-                    audioRef.current.play();
-                    setTtsMessage(`Playing ${languageLabel} audio...`);
-                    audioRef.current.onended = () => setTtsMessage(`${languageLabel} playback finished.`);
-                    audioRef.current.onerror = () => setTtsMessage(`Error playing ${languageLabel} audio.`);
-                }
-            } else {
-                throw new Error('No audio URL returned by Murf AI.');
+            // Convert the streaming response to a Blob for audio playback
+            const blob = await response.blob();
+            const audioUrl = URL.createObjectURL(blob);
+
+            if (audioRef.current) {
+                audioRef.current.src = audioUrl;
+                audioRef.current.play();
+                setTtsMessage(`Playing ${languageLabel} audio...`);
+                audioRef.current.onended = () => {
+                    setTtsMessage(`${languageLabel} playback finished.`);
+                    URL.revokeObjectURL(audioUrl); // Clean up the object URL
+                };
+                audioRef.current.onerror = () => {
+                    setTtsMessage(`Error playing ${languageLabel} audio.`);
+                    URL.revokeObjectURL(audioUrl); // Clean up on error
+                };
             }
         } catch (err) {
-            console.error(`Error generating ${languageLabel} audio:`, err);
-            setTtsMessage(`Failed to generate ${languageLabel} audio: ${err.message}`);
+            console.error(`Error streaming ${languageLabel} audio:`, err);
+            setTtsMessage(`Failed to stream ${languageLabel} audio: ${err.message}`);
         }
     };
 
@@ -271,7 +277,9 @@ const App = () => {
                             if (audioRef.current) audioRef.current.src = '';
                         }}
                         aria-label="Back to chapters list"
-                        className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition duration-                        <ChevronLeft className="w-5 h-5 mr-2" /> Back to Chapters
+                        className="flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+                    >
+                        <ChevronLeft className="w-5 h-5 mr-2" /> Back to Chapters
                     </button>
                 )}
                 <button
@@ -295,7 +303,7 @@ const App = () => {
             </nav>
 
             <div className="bg-white dark:bg-gray-700 p-6 rounded-xl shadow-lg mb-8 max-w-2xl mx-auto border border-gray-200 dark:border-gray-600">
-                <h2 className="text-2 font-bold mb-4 text-indigo-700 dark:text-indigo-400 flex items-center">
+                <h2 className="text-2xl font-bold mb-4 text-indigo-700 dark:text-indigo-400 flex items-center">
                     <Search className="w-6 h-6 mr-2" /> Get Specific Slok
                 </h2>
                 <form onSubmit={handleGetSlokSubmit} className="flex flex-col sm:flex-row gap-4">
@@ -303,7 +311,7 @@ const App = () => {
                         type="number"
                         placeholder="Chapter"
                         value={slokChapterInput}
-                        onChange={(e => setTSlokChapterInput(e.target.value)}
+                        onChange={(e) => setSlokChapterInput(e.target.value)}
                         className="flex-1 p-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                         min="1"
                         max="18"
@@ -313,7 +321,7 @@ const App = () => {
                         type="number"
                         placeholder="Verse"
                         value={slokVerseInput}
-                        onChange={(e => setTSlokVerseInput(e.target.value)}
+                        onChange={(e) => setSlokVerseInput(e.target.value)}
                         className="flex-1 p-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100"
                         min="1"
                         max={slokChapterInput && parseInt(slokChapterInput) <= slokCounts.length ? slokCounts[parseInt(slokChapterInput) - 1] : undefined}
@@ -321,8 +329,9 @@ const App = () => {
                     />
                     <button
                         type="submit"
-                            className="px-6 py-3 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-                        >
+                        className="px-6 py-3 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+                        aria-label="Fetch specific slok"
+                    >
                         Get Slok
                     </button>
                 </form>
@@ -334,11 +343,11 @@ const App = () => {
                 </div>
             )}
             {error && (
-                <div className="bg-red-100 dark:bg-red-900 border border-red-400 text-red-700 dark:text-red-300 px-4 py-300 rounded-xl relative max-w-2xl mx-auto my-3 shadow-md" role="alert">
+                <div className="bg-red-100 dark:bg-red-900 border border-red-400 text-red-700 dark:text-red-300 px-4 py-3 rounded-xl relative max-w-2xl mx-auto my-8 shadow-md" role="alert">
                     <strong className="font-bold">Error!</strong>
                     <span className="block sm:inline ml-2">{error}</span>
                     <button onClick={() => setError(null)} className="absolute top-0 right-0 p-2" aria-label="Dismiss error">
-                        x
+                        ×
                     </button>
                 </div>
             )}
@@ -347,12 +356,12 @@ const App = () => {
                 <main>
                     {viewMode === 'chapters' && (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
-                            {chapters.map((chapter => (
+                            {chapters.map((chapter) => (
                                 <button
                                     key={chapter.chapter_number}
-                                        onClick={() => handleChapterClick(chapter.chapter_number)}
-                                    className="bg-white dark:bg-gray-700 p-6 rounded-xl shadow-lg cursor-pointer hover:shadow-md transition duration-300 ease-in-out transform hover:-translate-y-1 border border-gray-200 dark:border-gray-600 text-left"
-                                    aria-controls={`View details for Chapter ${chapter.chapter_number}`}
+                                    onClick={() => handleChapterClick(chapter.chapter_number)}
+                                    className="bg-white dark:bg-gray-700 p-6 rounded-xl shadow-lg cursor-pointer hover:shadow-xl transition duration-300 ease-in-out transform hover:-translate-y-1 border border-gray-200 dark:border-gray-600 text-left"
+                                    aria-label={`View details for Chapter ${chapter.chapter_number}`}
                                 >
                                     <h3 className="text-xl font-bold mb-2 text-indigo-700 dark:text-indigo-400">
                                         Chapter {chapter.chapter_number}: {chapter.name}
@@ -360,7 +369,7 @@ const App = () => {
                                     <p className="text-gray-600 dark:text-gray-300 text-sm">
                                         <strong className="text-gray-800 dark:text-gray-200">Translation:</strong> {chapter.translation}
                                     </p>
-                                    <p className="text-gray-600 dark:text-gray-300 sm:mt-2">
+                                    <p className="text-gray-600 dark:text-gray-300 text-sm mt-2">
                                         <strong className="text-gray-800 dark:text-gray-200">Summary:</strong> {chapter.summary.en.substring(0, 150)}...
                                     </p>
                                     <span className="mt-4 text-indigo-500 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-500 font-semibold text-sm flex items-center">
@@ -387,12 +396,12 @@ const App = () => {
                             </p>
                             <h3 className="text-2xl font-bold mb-4 text-indigo-700 dark:text-indigo-400">Verses in this Chapter</h3>
                             <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-8 gap-3">
-                                {Array.from({ length: selectedChapter.verses_count }, (_, i) => i + 1).map((verseNum => (
+                                {Array.from({ length: selectedChapter.verses_count }, (_, i) => i + 1).map((verseNum) => (
                                     <button
                                         key={verseNum}
-                                            onClick={() => handleVerseClick(selectedChapter.chapter_number, verseNum)}
+                                        onClick={() => handleVerseClick(selectedChapter.chapter_number, verseNum)}
                                         className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg text-gray-800 dark:text-gray-200 font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-900 transition duration-200 ease-in-out transform hover:scale-105 shadow-sm"
-                                        aria-controls={`View verse ${verseNum} of chapter ${selectedChapter.chapter_number}`}
+                                        aria-label={`View verse ${verseNum} of chapter ${selectedChapter.chapter_number}`}
                                     >
                                         {verseNum}
                                     </button>
@@ -421,46 +430,24 @@ const App = () => {
                                         <button
                                             onClick={() => handleTextToSpeech('english')}
                                             disabled={isFetching}
-                                            className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:disabled:bg-blue-400 disabled:cursor-not-allowed"
-                                            aria-label="Listen to audio for English translation"
-                                            >
+                                            className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:bg-blue-400 disabled:cursor-not-allowed"
+                                            aria-label="Listen to English translation"
+                                        >
                                             <Volume2 className="w-5 h-5 mr-2" /> English Translation
                                         </button>
                                     )}
                                     {selectedSlok.siva?.et && (
                                         <button
                                             onClick={() => handleTextToSpeech('sivananda')}
-                                            disabled={isLoading}
-                                            className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:disabled:bg-blue-400 disabled:cursor-not-allowed"
-                                            aria-label="Listen to audio for Sivananda translation"
-                                            >
+                                            disabled={isFetching}
+                                            className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 disabled:bg-blue-400 disabled:cursor-not-allowed"
+                                            aria-label="Listen to Sivananda translation"
+                                        >
                                             <Volume2 className="w-5 h-5 mr-2" /> Sivananda Translation
                                         </button>
-                                    })}
+                                    )}
                                 </div>
                                 {ttsMessage && (
-                                    <p className={`mt-2 text-sm ${tTtsMessage.includes('Error') ? 'text-red-500' : 'text-gray-700 dark:text-gray-400'}`}>
-                                        {ttsMessage}
-                                    </p>
-                                )}
-                                <audio
-                                    ref={audioRef}
-                                    controls
-                                    className="w-full mt-4 rounded-lg bg-gray-200 dark:bg-gray-800"
-                                    aria-label="Audio control for audio player for slok"
-                                ></audio>
-                            </div>
-                        </div>
-                    )}
-                </main>
-            ))}
+                                    <p className={`mt-2 text-sm ${ttsMessage.includes('Error') ? 'text-red-500' : 'text-gray-600 dark kê
 
-            <footer className="text-center text-gray-600 dark:text-gray-400 mt-12 text-sm">
-                <p>Hare Krishna! 🙏</p>
-                <p>&copy; {new Date().getFullYear()} Bhagavad Gita Wisdom App. All rights reserved.</p>
-            </footer>
-        </div>
-    );
-};
-
-export default App;
+System: * Today's date and time is 01:09 PM IST on Thursday, June 19, 2025.
